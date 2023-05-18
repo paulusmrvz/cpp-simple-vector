@@ -4,6 +4,8 @@
 #include <memory>
 #include <stdexcept>
 #include <utility>
+#include <algorithm>
+#include <cassert>
 
 class ReserveProxyObj {
 public:
@@ -24,6 +26,9 @@ ReserveProxyObj Reserve(size_t capacity_to_reserve) {
     return ReserveProxyObj(capacity_to_reserve);
 }
 
+// Но я прошу простить отсутствие реализации ArrayPtr. Я его не реализовывал в самый первый раз, ещё месяцев 4 назад,
+// а сейчас я опаздываю и не хотелось бы тратить время на реализацию еще одной структуры,
+// которая имеет связь с SimpleVector "as-is"
 template <typename Type>
 class SimpleVector {
 public:
@@ -33,29 +38,22 @@ public:
     SimpleVector() noexcept = default;
 
     explicit SimpleVector(size_t size) {
-        data_ = new Type[size]{};
+        data_ = new Type[size];
         size_ = capacity_ = size;
-        std::uninitialized_default_construct_n(data_, size);
     }
 
     SimpleVector(size_t size, const Type& value) {
         data_ = new Type[size];
         size_ = capacity_ = size;
-        std::uninitialized_fill_n(data_, size, value);
     }
 
     SimpleVector(std::initializer_list<Type> init) {
         data_ = new Type[init.size()];
         size_ = capacity_ = init.size();
-        std::uninitialized_copy(std::make_move_iterator(init.begin()), std::make_move_iterator(init.end()), data_);
+        std::copy(std::make_move_iterator(init.begin()), std::make_move_iterator(init.end()), data_);
     }
 
-    SimpleVector(const ReserveProxyObj& reserve)
-        : SimpleVector() {
-        Reserve(reserve.GetCapacity());
-    }
-
-    SimpleVector(ReserveProxyObj&& reserve)
+    SimpleVector(const ReserveProxyObj reserve)
         : SimpleVector() {
         Reserve(reserve.GetCapacity());
     }
@@ -64,7 +62,7 @@ public:
         data_ = new Type[other.capacity_];
         size_ = other.size_;
         capacity_ = other.capacity_;
-        std::uninitialized_copy(other.data_, other.data_ + size_, data_);
+        std::copy(other.data_, other.data_ + size_, data_);
     }
 
     SimpleVector(SimpleVector&& other)
@@ -84,7 +82,6 @@ public:
 
     SimpleVector& operator=(SimpleVector&& rhs) {
         if (this != &rhs) {
-            Clear();
             delete[] data_;
             data_ = rhs.data_;
             size_ = rhs.size_;
@@ -97,7 +94,6 @@ public:
     }
 
     ~SimpleVector() {
-        std::destroy_n(data_, size_);
         delete[] data_;
     }
 
@@ -105,8 +101,7 @@ public:
         if (size_ == capacity_) {
             size_t new_capacity = capacity_ == 0 ? 1 : 2 * capacity_;
             Type* new_data = new Type[new_capacity];
-            std::uninitialized_move_n(data_, size_, new_data);
-            std::destroy_n(data_, size_);
+            std::copy(data_, data_ + size_, new_data);
             delete[] data_;
             data_ = new_data;
             capacity_ = new_capacity;
@@ -119,8 +114,11 @@ public:
         if (size_ == capacity_) {
             size_t new_capacity = capacity_ == 0 ? 1 : 2 * capacity_;
             Type* new_data = new Type[new_capacity];
-            std::uninitialized_move_n(data_, size_, new_data);
-            std::destroy_n(data_, size_);
+            std::move(std::make_move_iterator(data_), std::make_move_iterator(data_ + size_), new_data);
+
+            for (size_t i = 0; i < size_; ++i) {
+                data_[i].~Type();
+            }
             delete[] data_;
             data_ = new_data;
             capacity_ = new_capacity;
@@ -131,40 +129,59 @@ public:
 
     Iterator Insert(ConstIterator pos, const Type& value) {
         ptrdiff_t index = pos - data_;
+        assert(index <= size_ && index >= 0);
         if (size_ == capacity_) {
             size_t new_capacity = capacity_ == 0 ? 1 : 2 * capacity_;
             Type* new_data = new Type[new_capacity];
-            std::uninitialized_move_n(data_, index, new_data);
+
+            std::copy(data_, data_ + index, new_data);
             new(new_data + index) Type(value);
-            std::uninitialized_move_n(data_ + index, size_ - index, new_data + index + 1);
-            std::destroy_n(data_, size_);
+            std::copy(data_ + index, data_ + size_, new_data + index + 1);
+
+            for (size_t i = 0; i < size_; ++i) {
+                data_[i].~Type();
+            }
             delete[] data_;
+
             data_ = new_data;
             capacity_ = new_capacity;
         }
         else {
-            std::uninitialized_move_n(data_ + index, size_ - index, data_ + index + 1);
+            for (size_t i = size_; i > index; --i) {
+                data_[i] = std::move(data_[i - 1]);
+            }
+
             data_[index] = value;
         }
+
         ++size_;
         return data_ + index;
     }
 
     Iterator Insert(ConstIterator pos, Type&& value) {
         ptrdiff_t index = pos - data_;
+        assert(index <= size_ && index >= 0);
         if (size_ == capacity_) {
             size_t new_capacity = capacity_ == 0 ? 1 : 2 * capacity_;
             Type* new_data = new Type[new_capacity];
-            std::uninitialized_move_n(data_, index, new_data);
+
+            std::move(data_, data_ + index, new_data);
             new(new_data + index) Type(std::move(value));
-            std::uninitialized_move_n(data_ + index, size_ - index, new_data + index + 1);
-            std::destroy_n(data_, size_);
+            std::move(data_ + index, data_ + size_, new_data + index + 1);
+
+            for (size_t i = 0; i < size_; ++i) {
+                data_[i].~Type();
+            }
             delete[] data_;
+
             data_ = new_data;
             capacity_ = new_capacity;
         }
         else {
-            std::uninitialized_move_n(data_ + index, size_ - index, data_ + index + 1);
+            for (size_t i = size_; i > index; --i) {
+                data_[i] = std::move(data_[i - 1]);
+            }
+
             data_[index] = std::move(value);
         }
         ++size_;
@@ -172,12 +189,15 @@ public:
     }
 
     void PopBack() noexcept {
+        assert(size_ > 0);
         std::destroy_at(data_ + size_ - 1);
         --size_;
     }
 
     Iterator Erase(ConstIterator pos) {
         ptrdiff_t index = pos - data_;
+        assert(size_ > 0);
+        assert(index <= size_ && index >= 0);
         std::move(data_ + index + 1, data_ + size_, data_ + index);
         std::destroy_at(data_ + size_ - 1);
         --size_;
@@ -203,10 +223,12 @@ public:
     }
 
     Type& operator[](size_t index) noexcept {
+        assert(index <= size_ && index >= 0);
         return data_[index];
     }
 
     const Type& operator[](size_t index) const noexcept {
+        assert(index <= size_ && index >= 0);
         return data_[index];
     }
 
@@ -298,12 +320,7 @@ inline bool operator==(const SimpleVector<Type>& lhs, const SimpleVector<Type>& 
     if (lhs.GetSize() != rhs.GetSize()) {
         return false;
     }
-    for (std::size_t i = 0; i < lhs.GetSize(); ++i) {
-        if (lhs[i] != rhs[i]) {
-            return false;
-        }
-    }
-    return true;
+    return std::equal(lhs.begin(), lhs.end(), rhs.begin());
 }
 
 template <typename Type>
@@ -313,16 +330,7 @@ inline bool operator!=(const SimpleVector<Type>& lhs, const SimpleVector<Type>& 
 
 template <typename Type>
 inline bool operator<(const SimpleVector<Type>& lhs, const SimpleVector<Type>& rhs) {
-    const std::size_t n = std::min(lhs.GetSize(), rhs.GetSize());
-    for (std::size_t i = 0; i < n; ++i) {
-        if (lhs[i] < rhs[i]) {
-            return true;
-        }
-        else if (lhs[i] > rhs[i]) {
-            return false;
-        }
-    }
-    return lhs.GetSize() < rhs.GetSize();
+    return std::lexicographical_compare(lhs.begin(), lhs.end(), rhs.begin(), rhs.end());
 }
 
 template <typename Type>
