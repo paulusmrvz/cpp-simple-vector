@@ -172,8 +172,14 @@ public:
 				delete[] new_data;
 				throw;
 			}
-
-			new_data[index] =  value;
+			
+			try {
+				new_data[index] =  value;
+			}
+			catch (...) {
+				delete[] new_data;
+				throw;
+			}
 
 			try {
 				std::copy(data_ + index, data_ + size_, new_data + index + 1);
@@ -215,7 +221,13 @@ public:
 				throw;
 			}
 
-			new_data[index] = std::move(value);
+			try {
+				new_data[index] = std::move(value);
+			}
+			catch (...) {
+				delete[] new_data;
+				throw;
+			}
 
 			try {
 				std::move(data_ + index, data_ + size_, new_data + index + 1);
